@@ -1,0 +1,45 @@
+{
+    "name": "sqlsync/laravel-sqlsync",
+    "description": "Laravel package to receive and serve data from SqlSync Windows Agent",
+    "type": "library",
+    "license": "MIT",
+    "authors": [
+        {
+            "name": "Muhammad Khalaf",
+            "email": "contact@sqlsync.dev"
+        }
+    ],
+    "require": {
+        "php": "^8.2",
+        "illuminate/support": "^10.0|^11.0|^12.0",
+        "illuminate/database": "^10.0|^11.0|^12.0",
+        "illuminate/routing": "^10.0|^11.0|^12.0",
+        "illuminate/http": "^10.0|^11.0|^12.0"
+    },
+    "require-dev": {
+        "orchestra/testbench": "^8.0|^9.0",
+        "phpunit/phpunit": "^10.0|^11.0"
+    },
+    "autoload": {
+        "psr-4": {
+            "SqlSync\\LaravelSqlSync\\": "src/"
+        }
+    },
+    "autoload-dev": {
+        "psr-4": {
+            "SqlSync\\LaravelSqlSync\\Tests\\": "tests/"
+        }
+    },
+    "extra": {
+        "laravel": {
+            "providers": [
+                "SqlSync\\LaravelSqlSync\\SqlSyncServiceProvider"
+            ],
+            "aliases": {
+                "SqlSync": "SqlSync\\LaravelSqlSync\\Facades\\SqlSync"
+            }
+        }
+    },
+    "minimum-stability": "stable",
+    "prefer-stable": true
+}
