@@ -19,6 +19,11 @@ class BridgeSetting extends Model
         'fields',
         'create_defaults',
         'skip_create_if_missing_defaults',
+        'category_model',
+        'category_source',
+        'category_match_column',
+        'category_target_field',
+        'category_slug_column',
     ];
 
     protected $casts = [
@@ -27,6 +32,46 @@ class BridgeSetting extends Model
         'create_defaults' => 'array',
         'skip_create_if_missing_defaults' => 'boolean',
     ];
+
+    /**
+     * Resolves (finding or creating) the category referenced by a synced
+     * record's data, returning the category id to store on the product —
+     * or null if auto-category resolution isn't configured/applicable.
+     */
+    public function resolveCategoryId(array $recordArray): ?int
+    {
+        if (! $this->category_model
+            || ! class_exists($this->category_model)
+            || blank($this->category_source)
+            || blank($this->category_match_column)) {
+            return null;
+        }
+
+        $value = \Illuminate\Support\Arr::get($recordArray, $this->category_source);
+
+        if (blank($value)) {
+            return null;
+        }
+
+        $modelClass = $this->category_model;
+
+        /** @var \Illuminate\Database\Eloquent\Model|null $category */
+        $category = $modelClass::where($this->category_match_column, $value)->first();
+
+        if ($category) {
+            return $category->getKey();
+        }
+
+        $attributes = [$this->category_match_column => $value];
+
+        if ($this->category_slug_column) {
+            $attributes[$this->category_slug_column] = \Illuminate\Support\Str::slug($value).'-'.substr(md5($value), 0, 6);
+        }
+
+        $category = $modelClass::create($attributes);
+
+        return $category->getKey();
+    }
 
     /**
      * Returns the single settings row for the given company (or the
