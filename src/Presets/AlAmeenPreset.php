@@ -25,25 +25,23 @@ class AlAmeenPreset implements PresetContract
             'quantity'    => $raw['quantity']    ?? 0,
             'is_active'   => (bool) ($raw['is_active'] ?? true),
             'extra_data'  => array_filter([
-                // Prices — original mtPrices column names
-                'mtHigh'      => $raw['mtHigh']      ?? null,
-                'mtLow'       => $raw['mtLow']        ?? null,
-                'mtWhole'     => $raw['mtWhole']      ?? null,
-                'mtHalf'      => $raw['mtHalf']       ?? null,
-                'mtRetail'    => $raw['mtRetail']     ?? null,
-                'mtEndUser'   => $raw['mtEndUser']    ?? null,
-                'mtExport'    => $raw['mtExport']     ?? null,
-                'mtVendor'    => $raw['mtVendor']     ?? null,
-                // Units
+                // Prices — actual raw payload column names from the Agent
+                'price_whole'     => $raw['price_whole']     ?? null,
+                'price_half'      => $raw['price_half']      ?? null,
+                'price_retail'    => $raw['price_retail']    ?? null,
+                'price_end_user'  => $raw['price_end_user']  ?? null,
+                'price_vendor'    => $raw['price_vendor']    ?? null,
+                'price_avg'       => $raw['price_avg']       ?? null,
+                'price_last'      => $raw['price_last']      ?? null,
+                'last_price_date' => $raw['last_price_date'] ?? null,
+                // Extra
+                'origin'      => $raw['origin']      ?? null,
+                // Units — kept for accounts that expose these columns
                 'mtUnity'     => $raw['mtUnity']      ?? null,
                 'mtUnit2'     => $raw['mtUnit2']      ?? null,
                 'mtUnit2Fact' => $raw['mtUnit2Fact']  ?? null,
                 'mtUnit3'     => $raw['mtUnit3']      ?? null,
                 'mtUnit3Fact' => $raw['mtUnit3Fact']  ?? null,
-                // Extra
-                'mtOrigin'    => $raw['mtOrigin']     ?? null,
-                'mtPriceType' => $raw['mtPriceType']  ?? null,
-                'mtSellType'  => $raw['mtSellType']   ?? null,
             ], fn($v) => $v !== null),
         ];
     }
