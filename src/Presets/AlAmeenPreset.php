@@ -20,7 +20,7 @@ class AlAmeenPreset implements PresetContract
             'latin_name'  => $raw['latin_name']  ?? null,
             'code'        => $raw['code']        ?? null,
             'barcode'     => $raw['barcode']     ?? null,
-            'group_name'  => $raw['group']       ?? null,
+            'group_name'  => $raw['group_name']  ?? null,
             'unit'        => $raw['unit']        ?? null,
             'quantity'    => $raw['quantity']    ?? 0,
             'is_active'   => (bool) ($raw['is_active'] ?? true),
