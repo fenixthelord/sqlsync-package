@@ -58,7 +58,15 @@ class SyncedRecordBridgeObserver
             // Only the mapped columns are touched — mall-owned fields
             // (images, description, category, etc.) are never overwritten,
             // and an already-assigned category is never re-resolved.
-            $existing->update($data);
+            try {
+                $existing->update($data);
+            } catch (\Throwable $e) {
+                Log::warning('SqlSync bridge: skipped updating product — a mapped field violated a database constraint.', [
+                    'match_value' => $matchValue,
+                    'name' => $record->name,
+                    'error' => $e->getMessage(),
+                ]);
+            }
 
             return;
         }
@@ -86,6 +94,18 @@ class SyncedRecordBridgeObserver
         }
 
         $data[$setting->match_target] = $matchValue;
-        $modelClass::create(array_merge($data, $defaults));
+
+        try {
+            $modelClass::create(array_merge($data, $defaults));
+        } catch (\Throwable $e) {
+            // A single record with, say, a missing price or a duplicate
+            // SKU must never abort the whole sync/re-apply run for
+            // everyone else — log it and move on.
+            Log::warning('SqlSync bridge: skipped creating product — a mapped field violated a database constraint.', [
+                'match_value' => $matchValue,
+                'name' => $record->name,
+                'error' => $e->getMessage(),
+            ]);
+        }
     }
 }
