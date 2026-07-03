@@ -37,6 +37,12 @@ class SyncedRecordBridgeObserver
         $matchValue = Arr::get($recordArray, (string) $setting->match_source);
 
         if (blank($matchValue) || blank($setting->match_target)) {
+            Log::info('SqlSync bridge: skipped — match source field is empty on this record.', [
+                'match_source' => $setting->match_source,
+                'record_id' => $record->id,
+                'name' => $record->name,
+            ]);
+
             return;
         }
 
