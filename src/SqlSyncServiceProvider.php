@@ -7,6 +7,7 @@ use SqlSync\LaravelSqlSync\Services\SyncService;
 use SqlSync\LaravelSqlSync\Services\AgentAuthService;
 use SqlSync\LaravelSqlSync\Console\InstallCommand;
 use SqlSync\LaravelSqlSync\Console\MakeTenantCommand;
+use SqlSync\LaravelSqlSync\Console\ReapplyBridgeCommand;
 use SqlSync\LaravelSqlSync\Models\SyncedRecord;
 use SqlSync\LaravelSqlSync\Observers\SyncedRecordBridgeObserver;
 
@@ -49,6 +50,7 @@ class SqlSyncServiceProvider extends ServiceProvider
             $this->commands([
                 InstallCommand::class,
                 MakeTenantCommand::class,
+                ReapplyBridgeCommand::class,
             ]);
         }
     }
