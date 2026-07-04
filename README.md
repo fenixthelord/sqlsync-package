@@ -78,7 +78,9 @@ X-Timestamp:   {unix-timestamp}
 | Key | Software |
 |-----|----------|
 | `al_ameen` | Al-Ameen (الأمين) — maps from `vwMtPrices` |
-| `al_bayan` | Al-Bayan (البيان) — pending schema confirmation |
+| `al_bayan` | Al-Bayan (البيان) — maps from `MatCard` + `Barcode` (joined by `Num`) |
+
+> **Note on Al-Bayan pricing:** Al-Bayan exposes generic `Price1`–`Price35` columns whose meaning (retail, wholesale, etc.) is configured per business *inside* Al-Bayan itself — it isn't fixed. The preset passes every price column through into `extra_data` as-is; each installation then picks the right one from **Filament → SqlSync → Product Bridge → Field Mapping**. Don't hardcode a "the retail price" assumption for Al-Bayan.
 
 ---
 
@@ -109,7 +111,27 @@ class MyPreset implements \SqlSync\LaravelSqlSync\Contracts\PresetContract
 
 ---
 
-## Admin Panel
+## Product Bridge
+
+The package never writes to your app's own `products` table directly — every project has a different schema. Instead, `SyncedRecordBridgeObserver` (auto-registered, nothing to wire up) reads a `BridgeSetting` row configured visually from **Filament → SqlSync → Product Bridge**:
+
+- **Target model** — your own `App\Models\Product` (or anything else)
+- **Match column** — e.g. `barcode` (synced record) ↔ `sku` (your table)
+- **Field mapping** — any column on your table ↔ any field on the synced record (dot notation into `extra_data` supported, e.g. `extra_data.price_4`)
+- **Auto-category** — find-or-create a category from a synced field (e.g. `group_name`), so a required `category_id` never blocks product creation
+- **Bridge Activity log** (`sqlsync_bridge_logs`) — every decision (created / updated / skipped + reason) is recorded and browsable from Filament
+
+### Re-applying the bridge to already-synced data
+If you change the Bridge mapping *after* records have already synced, existing rows won't automatically re-trigger (especially with incremental/`SinceColumn` syncing). Two ways to force a re-run:
+
+```bash
+# CLI — no execution time limit, best for large catalogs, for developers only
+php artisan sqlsync:reapply-bridge
+```
+
+Or click **"إعادة تطبيق الربط على كل السجلات"** in Filament, which dispatches `ReapplyBridgeJob` to your queue (requires `QUEUE_CONNECTION=database` + a cron running `queue:work` — see `TROUBLESHOOTING.md`) so non-technical users never need a terminal.
+
+---
 
 This package is **API-only**. For an admin UI, install the optional Filament plugin:
 
@@ -159,6 +181,16 @@ return [
     ],
 ];
 ```
+
+---
+
+---
+
+## Troubleshooting
+
+Common real-world issues (Opcache on shared hosting, WinForms quirks, mismatched preset columns, duplicate barcodes, etc.) are documented in **[`TROUBLESHOOTING.md`](./TROUBLESHOOTING.md)**.
+
+Full docs (with screenshots and a step-by-step quick start): see the SqlSync website `docs/` folder.
 
 ---
 
