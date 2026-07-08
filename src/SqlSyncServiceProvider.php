@@ -11,6 +11,7 @@ use SqlSync\LaravelSqlSync\Console\MakeTenantCommand;
 use SqlSync\LaravelSqlSync\Console\ReapplyBridgeCommand;
 use SqlSync\LaravelSqlSync\Console\GenerateLicenseKeypairCommand;
 use SqlSync\LaravelSqlSync\Console\IssueLicenseCommand;
+use SqlSync\LaravelSqlSync\Console\ImportLegacyLicenseCommand;
 use SqlSync\LaravelSqlSync\Models\SyncedRecord;
 use SqlSync\LaravelSqlSync\Observers\SyncedRecordBridgeObserver;
 
@@ -54,6 +55,7 @@ class SqlSyncServiceProvider extends ServiceProvider
                 ReapplyBridgeCommand::class,
                 GenerateLicenseKeypairCommand::class,
                 IssueLicenseCommand::class,
+                ImportLegacyLicenseCommand::class,
             ]);
         }
     }
