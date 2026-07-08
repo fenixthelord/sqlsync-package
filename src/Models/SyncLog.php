@@ -14,6 +14,11 @@ class SyncLog extends Model
         'agent_id',
         'company_id',
         'preset',
+        'dataset',
+        'batch_index',
+        'batch_count',
+        'idempotency_key',
+        'high_watermark',
         'inserted',
         'updated',
         'skipped',
@@ -23,6 +28,7 @@ class SyncLog extends Model
     ];
 
     protected $casts = [
-        'synced_at' => 'datetime',
+        'synced_at'      => 'datetime',
+        'high_watermark' => 'datetime',
     ];
 }
