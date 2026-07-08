@@ -14,14 +14,43 @@ class SyncController extends Controller
     /**
      * Receive a sync batch from the Windows Agent.
      *
-     * Expected payload:
-     * {
-     *   "preset"    : "al_ameen",
-     *   "company_id": 1,           // only when multi_tenant = true
-     *   "records"   : [ { ... } ]
-     * }
+     * Supports two payload formats, chosen by the "version" field:
+     *
+     * v1 (legacy — Agents pre-Batch B):
+     *   {
+     *     "preset"    : "al_ameen",
+     *     "company_id": 1,
+     *     "records"   : [ { ... } ]
+     *   }
+     *
+     * v2 (current):
+     *   {
+     *     "version"   : 2,
+     *     "provider"  : "al_ameen",
+     *     "dataset"   : "materials",
+     *     "company_id": 1,
+     *     "batch"     : {
+     *       "index"           : 0,
+     *       "count"           : 1,
+     *       "idempotency_key" : "…"
+     *     },
+     *     "watermark" : "2026-07-01T14:23:15Z",
+     *     "records"   : [ { ... } ]
+     *   }
+     *
+     * The old Agent binaries in the field can keep sending v1 while
+     * upgraded ones send v2 — no coordinated deploy needed.
      */
     public function receive(Request $request): JsonResponse
+    {
+        $version = (int) $request->input('version', 1);
+
+        return $version === 2
+            ? $this->receiveV2($request)
+            : $this->receiveV1($request);
+    }
+
+    private function receiveV1(Request $request): JsonResponse
     {
         $request->validate([
             'preset'    => ['required', 'string'],
@@ -34,40 +63,81 @@ class SyncController extends Controller
         }
 
         $result = $this->syncService->process(
-            preset:    $request->input('preset'),
-            records:   $request->input('records'),
-            agentId:   $request->input('_agent_id'),
-            companyId: $request->input('company_id'),
+            provider:       $request->input('preset'),
+            dataset:        null,
+            records:        $request->input('records'),
+            agentId:        (string) $request->input('_agent_id'),
+            companyId:      $request->input('company_id'),
+            batchIndex:     null,
+            batchCount:     null,
+            idempotencyKey: null,
+            watermark:      null,
         );
 
         return response()->json([
             'success'  => true,
+            'version'  => 1,
             'inserted' => $result['inserted'],
             'updated'  => $result['updated'],
             'skipped'  => $result['skipped'],
         ]);
     }
 
-    /**
-     * Agent heartbeat — lets the backend track agent activity.
-     */
+    private function receiveV2(Request $request): JsonResponse
+    {
+        $request->validate([
+            'provider'              => ['required', 'string'],
+            'dataset'               => ['required', 'string'],
+            'batch'                 => ['required', 'array'],
+            'batch.index'           => ['required', 'integer', 'min:0'],
+            'batch.count'           => ['required', 'integer', 'min:1'],
+            'batch.idempotency_key' => ['required', 'string', 'max:64'],
+            'watermark'             => ['nullable', 'date'],
+            'records'               => ['required', 'array'],
+            'records.*'             => ['array'],
+        ]);
+
+        if (config('sqlsync.multi_tenant')) {
+            $request->validate(['company_id' => ['required', 'integer']]);
+        }
+
+        $result = $this->syncService->process(
+            provider:       $request->input('provider'),
+            dataset:        $request->input('dataset'),
+            records:        $request->input('records'),
+            agentId:        (string) $request->input('_agent_id'),
+            companyId:      $request->input('company_id'),
+            batchIndex:     $request->input('batch.index'),
+            batchCount:     $request->input('batch.count'),
+            idempotencyKey: $request->input('batch.idempotency_key'),
+            watermark:      $request->input('watermark'),
+        );
+
+        return response()->json([
+            'success'         => true,
+            'version'         => 2,
+            'inserted'        => $result['inserted'],
+            'updated'         => $result['updated'],
+            'skipped'         => $result['skipped'],
+            'replay'          => $result['replay'] ?? false,
+            'idempotency_key' => $request->input('batch.idempotency_key'),
+        ]);
+    }
+
     public function heartbeat(Request $request): JsonResponse
     {
         $this->syncService->recordHeartbeat(
-            agentId:   $request->input('_agent_id'),
+            agentId:   (string) $request->input('_agent_id'),
             companyId: $request->input('company_id'),
         );
 
         return response()->json(['status' => 'ok']);
     }
 
-    /**
-     * Returns sync log for this agent.
-     */
     public function logs(Request $request): JsonResponse
     {
         $logs = $this->syncService->getLogsForAgent(
-            agentId:   $request->input('_agent_id'),
+            agentId:   (string) $request->input('_agent_id'),
             companyId: $request->input('company_id'),
         );
 

@@ -5,9 +5,13 @@ namespace SqlSync\LaravelSqlSync;
 use Illuminate\Support\ServiceProvider;
 use SqlSync\LaravelSqlSync\Services\SyncService;
 use SqlSync\LaravelSqlSync\Services\AgentAuthService;
+use SqlSync\LaravelSqlSync\Services\LicenseService;
 use SqlSync\LaravelSqlSync\Console\InstallCommand;
 use SqlSync\LaravelSqlSync\Console\MakeTenantCommand;
 use SqlSync\LaravelSqlSync\Console\ReapplyBridgeCommand;
+use SqlSync\LaravelSqlSync\Console\GenerateLicenseKeypairCommand;
+use SqlSync\LaravelSqlSync\Console\IssueLicenseCommand;
+use SqlSync\LaravelSqlSync\Console\ImportLegacyLicenseCommand;
 use SqlSync\LaravelSqlSync\Models\SyncedRecord;
 use SqlSync\LaravelSqlSync\Observers\SyncedRecordBridgeObserver;
 
@@ -19,6 +23,7 @@ class SqlSyncServiceProvider extends ServiceProvider
 
         $this->app->singleton(SyncService::class);
         $this->app->singleton(AgentAuthService::class);
+        $this->app->singleton(LicenseService::class);
     }
 
     public function boot(): void
@@ -36,21 +41,21 @@ class SqlSyncServiceProvider extends ServiceProvider
         SyncedRecord::observe(SyncedRecordBridgeObserver::class);
 
         if ($this->app->runningInConsole()) {
-            // Publish config
             $this->publishes([
                 __DIR__ . '/../config/sqlsync.php' => config_path('sqlsync.php'),
             ], 'sqlsync-config');
 
-            // Publish migrations (optional - already auto-loaded)
             $this->publishes([
                 __DIR__ . '/../database/migrations' => database_path('migrations'),
             ], 'sqlsync-migrations');
 
-            // Register artisan commands
             $this->commands([
                 InstallCommand::class,
                 MakeTenantCommand::class,
                 ReapplyBridgeCommand::class,
+                GenerateLicenseKeypairCommand::class,
+                IssueLicenseCommand::class,
+                ImportLegacyLicenseCommand::class,
             ]);
         }
     }
