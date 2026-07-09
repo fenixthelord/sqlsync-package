@@ -90,7 +90,11 @@ class SyncController extends Controller
             'dataset'               => ['required', 'string'],
             'batch'                 => ['required', 'array'],
             'batch.index'           => ['required', 'integer', 'min:0'],
-            'batch.count'           => ['required', 'integer', 'min:1'],
+            // Streaming Agents don't know the total batch count upfront —
+            // they push each batchSize-sized buffer as it fills up out of
+            // a SqlDataReader. Only the final flush of the tail buffer
+            // carries a count, and even then it's advisory.
+            'batch.count'           => ['nullable', 'integer', 'min:1'],
             'batch.idempotency_key' => ['required', 'string', 'max:64'],
             'watermark'             => ['nullable', 'date'],
             'records'               => ['required', 'array'],
