@@ -150,7 +150,15 @@ class SyncedRecordBridgeObserver
         }
 
         try {
-            $created = $modelClass::create(array_merge($data, $defaults));
+            // CRITICAL: must be $data + $defaults, NOT array_merge($data, $defaults).
+            // array_merge() has the SECOND array win on key collisions — so a
+            // correctly-resolved category_id in $data (from resolveCategoryId
+            // above) was being silently overwritten by create_defaults' fallback
+            // value on every single create, regardless of whether resolution
+            // succeeded. The + operator has the LEFT operand win instead, which
+            // is the actual intended semantics: defaults fill gaps, never clobber
+            // a value $data already has.
+            $created = $modelClass::create($data + $defaults);
             $this->log($record, 'created', null, null, $modelClass, $created->getKey(), $matchValueForLog);
         } catch (\Throwable $e) {
             // A single record with, say, a missing price or a duplicate
