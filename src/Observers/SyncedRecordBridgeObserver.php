@@ -145,8 +145,23 @@ class SyncedRecordBridgeObserver
         // scalar value to store; the composite fields it used are
         // already part of $data via the normal 'fields' mapping if the
         // admin included them there too).
+        //
+        // For a BRAND-NEW row specifically, leaving match_target unset
+        // is a real problem: it's very commonly a NOT NULL and/or
+        // UNIQUE column (e.g. 'sku') on the host app's own Products
+        // table, and INSERT will simply fail for every barcode-less
+        // item otherwise (confirmed: SQLSTATE[HY000] 1364 'sku' doesn't
+        // have a default value, on every fallback-matched create).
+        //
+        // Fix: synthesize a value from the record's own source_guid,
+        // which is guaranteed unique per record (it's the sync system's
+        // own primary key — e.g. 'bayan-21372'). Prefixed so it's
+        // visually obvious in an admin UI that this isn't a real
+        // barcode/SKU from the supplier.
         if (! blank($matchValue)) {
             $data[$setting->match_target] = $matchValue;
+        } elseif ($usingFallback) {
+            $data[$setting->match_target] = 'SS-'.$record->source_guid;
         }
 
         try {
