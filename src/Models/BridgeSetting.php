@@ -96,9 +96,26 @@ class BridgeSetting extends Model
             $attributes[$this->category_slug_column] = \Illuminate\Support\Str::slug($value).'-'.substr(md5($value), 0, 6);
         }
 
-        $category = $modelClass::create($attributes);
+        try {
+            $category = $modelClass::create($attributes);
 
-        return $category->getKey();
+            return $category->getKey();
+        } catch (\Throwable $e) {
+            // A failure creating a NEW category (e.g. some other NOT
+            // NULL column on the categories table we don't know about,
+            // a race with a concurrent sync creating the same name)
+            // must never bubble up and threaten the isolation of the
+            // record currently being processed. Degrade to "couldn't
+            // resolve a category" — the caller falls through to
+            // create_defaults' category_id, and the product itself
+            // still gets created successfully instead of being lost.
+            \Illuminate\Support\Facades\Log::warning('SqlSync: failed to create category node', [
+                'value' => $value,
+                'error' => $e->getMessage(),
+            ]);
+
+            return null;
+        }
     }
 
     /**
