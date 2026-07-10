@@ -23,6 +23,7 @@ class SyncedRecord extends Model
         'quantity',
         'is_active',
         'extra_data',   // JSON — holds preset-specific fields (prices, origin, etc.)
+        'product_id',   // sticky link to the bridged Product — see SyncedRecordBridgeObserver
         'synced_at',
     ];
 

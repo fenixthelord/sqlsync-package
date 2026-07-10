@@ -44,38 +44,59 @@ class SyncedRecordBridgeObserver
         $usingFallback = false;
         $existing = null;
 
-        if (blank($matchValue) || blank($setting->match_target)) {
-            // Primary match key (usually barcode) is blank on this
-            // record — try the composite fallback (e.g. name + brand)
-            // before giving up entirely. Common for pharmacy / health
-            // items that are sold without a printed barcode.
-            $fallback = $setting->resolveFallbackMatch($modelClass, $recordArray);
+        // ── Sticky link: once a source item has been bridged to a
+        // Product (by ANY method — barcode, fallback, whatever), we
+        // remember the link on the SyncedRecord itself. Every future
+        // sync of the SAME source item goes straight to that Product,
+        // no re-matching by barcode/name at all.
+        //
+        // Why this matters: barcode and name are VALUES that can change
+        // at the source (a supplier finally prints a barcode, an item
+        // gets renamed, a barcode gets corrected). Re-deriving identity
+        // from those values on every sync means any such change looks
+        // like "a brand new item" and produces a duplicate Product
+        // instead of updating the existing one. source_guid (Al-Bayan's
+        // own internal item number) never changes for the life of the
+        // item, so anchoring to it — once established — is what makes
+        // updates resilient to any amount of source-side editing.
+        if ($record->product_id) {
+            $existing = $modelClass::find($record->product_id);
+            // If the linked Product was deleted independently (e.g. a
+            // human removed it from the website directly), fall through
+            // to normal matching below rather than silently doing
+            // nothing — the item may need to be re-created.
+        }
 
-            if (! $fallback['query_ok']) {
-                $reason = empty($setting->fallback_match_fields)
-                    ? "الحقل '{$setting->match_source}' فاضي بهاد السجل، ولا يوجد مطابقة احتياطية معرّفة."
-                    : "الحقل '{$setting->match_source}' فاضي، والمطابقة الاحتياطية ({$setting->describeFallbackKey($recordArray)}) غير مكتملة.";
+        if (! $existing) {
+            if (blank($matchValue) || blank($setting->match_target)) {
+                // Primary match key (usually barcode) is blank on this
+                // record — try the composite fallback (e.g. name + brand)
+                // before giving up entirely. Common for pharmacy / health
+                // items that are sold without a printed barcode.
+                $fallback = $setting->resolveFallbackMatch($modelClass, $recordArray);
 
-                $this->log($record, 'skipped', 'missing_match', $reason);
+                if (! $fallback['query_ok']) {
+                    $reason = empty($setting->fallback_match_fields)
+                        ? "الحقل '{$setting->match_source}' فاضي بهاد السجل، ولا يوجد مطابقة احتياطية معرّفة."
+                        : "الحقل '{$setting->match_source}' فاضي، والمطابقة الاحتياطية ({$setting->describeFallbackKey($recordArray)}) غير مكتملة.";
 
-                Log::info('SqlSync bridge: skipped — no usable match key (primary blank, fallback unavailable).', [
-                    'match_source' => $setting->match_source,
-                    'record_id' => $record->id,
-                    'name' => $record->name,
-                ]);
+                    $this->log($record, 'skipped', 'missing_match', $reason);
 
-                return;
+                    Log::info('SqlSync bridge: skipped — no usable match key (primary blank, fallback unavailable).', [
+                        'match_source' => $setting->match_source,
+                        'record_id' => $record->id,
+                        'name' => $record->name,
+                    ]);
+
+                    return;
+                }
+
+                $usingFallback = true;
+                $existing = $fallback['existing'];
+            } else {
+                /** @var \Illuminate\Database\Eloquent\Model|null $existing */
+                $existing = $modelClass::where($setting->match_target, $matchValue)->first();
             }
-
-            $usingFallback = true;
-            $existing = $fallback['existing'];
-            // matchValue stays null here — there's no single scalar value
-            // to log/store as the "match" when it's a composite key. The
-            // log's match_value column records the composite description
-            // instead (see $this->log call below for fallback cases).
-        } else {
-            /** @var \Illuminate\Database\Eloquent\Model $existing */
-            $existing = $modelClass::where($setting->match_target, $matchValue)->first();
         }
 
         $matchValueForLog = $usingFallback
@@ -102,6 +123,19 @@ class SyncedRecordBridgeObserver
 
             try {
                 $existing->update($data);
+
+                // Persist the sticky link if this is the first time we're
+                // seeing a successful match for this SyncedRecord (e.g.
+                // records that existed before this feature shipped, or
+                // records that fell through to fresh matching because
+                // their previously-linked Product was deleted). Uses
+                // a raw query update rather than $record->update() to
+                // avoid re-triggering this same 'saved' observer
+                // recursively on the SyncedRecord itself.
+                if ($record->product_id !== $existing->getKey()) {
+                    SyncedRecord::whereKey($record->id)->update(['product_id' => $existing->getKey()]);
+                }
+
                 $this->log($record, 'updated', null, null, $modelClass, $existing->getKey(), $matchValueForLog);
             } catch (\Throwable $e) {
                 $this->log($record, 'skipped', 'db_error', $e->getMessage(), $modelClass, null, $matchValueForLog);
@@ -174,6 +208,13 @@ class SyncedRecordBridgeObserver
             // is the actual intended semantics: defaults fill gaps, never clobber
             // a value $data already has.
             $created = $modelClass::create($data + $defaults);
+
+            // Same reasoning as the update path above — anchor this
+            // SyncedRecord to the Product we just created, so any future
+            // change to barcode/name/anything used for matching updates
+            // THIS product instead of creating a duplicate.
+            SyncedRecord::whereKey($record->id)->update(['product_id' => $created->getKey()]);
+
             $this->log($record, 'created', null, null, $modelClass, $created->getKey(), $matchValueForLog);
         } catch (\Throwable $e) {
             // A single record with, say, a missing price or a duplicate
