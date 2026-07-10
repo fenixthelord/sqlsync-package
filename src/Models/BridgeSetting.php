@@ -16,6 +16,7 @@ class BridgeSetting extends Model
         'target_model',
         'match_source',
         'match_target',
+        'fallback_match_fields',
         'fields',
         'create_defaults',
         'skip_create_if_missing_defaults',
@@ -28,6 +29,7 @@ class BridgeSetting extends Model
 
     protected $casts = [
         'enabled' => 'boolean',
+        'fallback_match_fields' => 'array',
         'fields' => 'array',
         'create_defaults' => 'array',
         'skip_create_if_missing_defaults' => 'boolean',
@@ -71,6 +73,75 @@ class BridgeSetting extends Model
         $category = $modelClass::create($attributes);
 
         return $category->getKey();
+    }
+
+    /**
+     * Resolves an existing product using the composite fallback match
+     * (name + brand, or whatever the admin configured in Filament) —
+     * used only when the primary match_source is blank on a record.
+     *
+     * Every configured pair must have a non-blank value on this record
+     * AND match exactly (AND'd WHERE clauses) for a hit; a single blank
+     * field means the fallback itself can't be trusted for this record
+     * and the caller should skip rather than guess.
+     *
+     * @return array{query_ok: bool, existing: ?\Illuminate\Database\Eloquent\Model}
+     *   query_ok = false means the fallback fields themselves were
+     *   incomplete on this record (nothing to search with at all).
+     */
+    public function resolveFallbackMatch(string $modelClass, array $recordArray): array
+    {
+        $pairs = $this->fallback_match_fields ?? [];
+
+        if (empty($pairs)) {
+            return ['query_ok' => false, 'existing' => null];
+        }
+
+        $query = $modelClass::query();
+
+        foreach ($pairs as $pair) {
+            $source = $pair['source'] ?? null;
+            $target = $pair['target'] ?? null;
+
+            if (blank($source) || blank($target)) {
+                return ['query_ok' => false, 'existing' => null];
+            }
+
+            $value = \Illuminate\Support\Arr::get($recordArray, $source);
+
+            if (blank($value)) {
+                // Any missing piece of the composite key makes the whole
+                // fallback untrustworthy for this specific record — two
+                // items with blank brand would otherwise collide.
+                return ['query_ok' => false, 'existing' => null];
+            }
+
+            $query->where($target, $value);
+        }
+
+        return ['query_ok' => true, 'existing' => $query->first()];
+    }
+
+    /**
+     * Human-readable description of the fallback key for a given record,
+     * used in Bridge Activity log messages so support/customers can see
+     * exactly what values were compared.
+     */
+    public function describeFallbackKey(array $recordArray): string
+    {
+        $pairs = $this->fallback_match_fields ?? [];
+        $parts = [];
+
+        foreach ($pairs as $pair) {
+            $source = $pair['source'] ?? null;
+            if (! $source) {
+                continue;
+            }
+            $value = \Illuminate\Support\Arr::get($recordArray, $source);
+            $parts[] = ($pair['target'] ?? $source).'='.($value ?? '—');
+        }
+
+        return implode(', ', $parts);
     }
 
     /**
