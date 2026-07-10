@@ -5,6 +5,7 @@ namespace SqlSync\LaravelSqlSync\Services;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Log;
 use SqlSync\LaravelSqlSync\Contracts\PresetContract;
+use SqlSync\LaravelSqlSync\Models\CategoryNode;
 use SqlSync\LaravelSqlSync\Models\SyncAgent;
 use SqlSync\LaravelSqlSync\Models\SyncedRecord;
 use SqlSync\LaravelSqlSync\Models\SyncLog;
@@ -51,6 +52,18 @@ class SyncService
                     'replay'   => true,
                 ];
             }
+        }
+
+        // Category-tree nodes are reference data, not sellable products —
+        // they never go through SyncedRecord/the Product Bridge Observer.
+        // Routed separately so the two concerns (products vs. the
+        // classification tree they're filed under) can't leak into each
+        // other's logic.
+        if ($dataset === 'categories') {
+            return $this->processCategoryNodes(
+                $records, $provider, $dataset, $agentId, $companyId,
+                $batchIndex, $batchCount, $idempotencyKey, $watermark,
+            );
         }
 
         // ── Resolve preset ──────────────────────────────────────────
@@ -118,25 +131,115 @@ class SyncService
 
         $this->updateAgentStats($agentId, $companyId, $inserted + $updated);
 
-        if (config('sqlsync.sync.log_enabled')) {
-            SyncLog::create([
-                'agent_id'        => $agentId,
-                'company_id'      => $companyId,
-                'preset'          => $provider,
-                'dataset'         => $dataset,
-                'batch_index'     => $batchIndex,
-                'batch_count'     => $batchCount,
-                'idempotency_key' => $idempotencyKey,
-                'high_watermark'  => $watermark,
-                'inserted'        => $inserted,
-                'updated'         => $updated,
-                'skipped'         => $skipped,
-                'status'          => 'success',
-                'synced_at'       => now(),
-            ]);
-        }
+        $this->writeSyncLog(
+            $provider, $dataset, $agentId, $companyId,
+            $batchIndex, $batchCount, $idempotencyKey, $watermark,
+            $inserted, $updated, $skipped,
+        );
 
         return compact('inserted', 'updated', 'skipped') + ['replay' => false];
+    }
+
+    /**
+     * Upserts category-tree nodes (Al-Bayan's Kind=1 MatCard rows, or
+     * the equivalent from a future preset) into sqlsync_category_nodes.
+     * Matched by (company_id, source_num) — Al-Bayan's Num column is a
+     * single sequence shared by both products and tree nodes, so it's
+     * a safe natural key here the same way source_guid is for products.
+     *
+     * @return array{inserted:int, updated:int, skipped:int, replay:bool}
+     */
+    private function processCategoryNodes(
+        array $records,
+        string $provider,
+        ?string $dataset,
+        string $agentId,
+        ?int $companyId,
+        ?int $batchIndex,
+        ?int $batchCount,
+        ?string $idempotencyKey,
+        ?string $watermark,
+    ): array {
+        $inserted = 0;
+        $updated  = 0;
+        $skipped  = 0;
+
+        DB::transaction(function () use ($records, $agentId, $companyId, &$inserted, &$updated, &$skipped) {
+            foreach ($records as $raw) {
+                $sourceNum = $raw['source_num'] ?? null;
+                $treeNum   = $raw['tree_num'] ?? null;
+                $name      = $raw['name'] ?? null;
+
+                if ($sourceNum === null || blank($treeNum) || blank($name)) {
+                    $skipped++;
+
+                    continue;
+                }
+
+                $payload = [
+                    'agent_id'   => $agentId,
+                    'company_id' => $companyId,
+                    'source_num' => $sourceNum,
+                    'tree_num'   => $treeNum,
+                    'name'       => $name,
+                    'synced_at'  => now(),
+                ];
+
+                $existing = CategoryNode::where('source_num', $sourceNum)
+                    ->when($companyId, fn ($q) => $q->where('company_id', $companyId))
+                    ->first();
+
+                if ($existing) {
+                    $existing->update($payload);
+                    $updated++;
+                } else {
+                    CategoryNode::create($payload);
+                    $inserted++;
+                }
+            }
+        });
+
+        $this->writeSyncLog(
+            $provider, $dataset, $agentId, $companyId,
+            $batchIndex, $batchCount, $idempotencyKey, $watermark,
+            $inserted, $updated, $skipped,
+        );
+
+        return compact('inserted', 'updated', 'skipped') + ['replay' => false];
+    }
+
+    private function writeSyncLog(
+        string $provider,
+        ?string $dataset,
+        string $agentId,
+        ?int $companyId,
+        ?int $batchIndex,
+        ?int $batchCount,
+        ?string $idempotencyKey,
+        ?string $watermark,
+        int $inserted,
+        int $updated,
+        int $skipped,
+    ): void {
+        if (! config('sqlsync.sync.log_enabled')) {
+            return;
+        }
+
+        SyncLog::create([
+            'agent_id'        => $agentId,
+            'company_id'      => $companyId,
+            'preset'          => $provider,
+            'dataset'         => $dataset,
+            'batch_index'     => $batchIndex,
+            'batch_count'     => $batchCount,
+            'idempotency_key' => $idempotencyKey,
+            'high_watermark'  => $watermark,
+            'inserted'        => $inserted,
+            'updated'         => $updated,
+            'skipped'         => $skipped,
+            'status'          => 'success',
+            'synced_at'       => now(),
+        ]);
     }
 
     public function recordHeartbeat(string $agentId, ?int $companyId = null): void
