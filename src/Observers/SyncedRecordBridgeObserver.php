@@ -41,20 +41,46 @@ class SyncedRecordBridgeObserver
         $recordArray = $record->toArray();
         $matchValue = Arr::get($recordArray, (string) $setting->match_source);
 
+        $usingFallback = false;
+        $existing = null;
+
         if (blank($matchValue) || blank($setting->match_target)) {
-            $this->log($record, 'skipped', 'missing_match', "الحقل '{$setting->match_source}' فاضي بهاد السجل.");
+            // Primary match key (usually barcode) is blank on this
+            // record — try the composite fallback (e.g. name + brand)
+            // before giving up entirely. Common for pharmacy / health
+            // items that are sold without a printed barcode.
+            $fallback = $setting->resolveFallbackMatch($modelClass, $recordArray);
 
-            Log::info('SqlSync bridge: skipped — match source field is empty on this record.', [
-                'match_source' => $setting->match_source,
-                'record_id' => $record->id,
-                'name' => $record->name,
-            ]);
+            if (! $fallback['query_ok']) {
+                $reason = empty($setting->fallback_match_fields)
+                    ? "الحقل '{$setting->match_source}' فاضي بهاد السجل، ولا يوجد مطابقة احتياطية معرّفة."
+                    : "الحقل '{$setting->match_source}' فاضي، والمطابقة الاحتياطية ({$setting->describeFallbackKey($recordArray)}) غير مكتملة.";
 
-            return;
+                $this->log($record, 'skipped', 'missing_match', $reason);
+
+                Log::info('SqlSync bridge: skipped — no usable match key (primary blank, fallback unavailable).', [
+                    'match_source' => $setting->match_source,
+                    'record_id' => $record->id,
+                    'name' => $record->name,
+                ]);
+
+                return;
+            }
+
+            $usingFallback = true;
+            $existing = $fallback['existing'];
+            // matchValue stays null here — there's no single scalar value
+            // to log/store as the "match" when it's a composite key. The
+            // log's match_value column records the composite description
+            // instead (see $this->log call below for fallback cases).
+        } else {
+            /** @var \Illuminate\Database\Eloquent\Model $existing */
+            $existing = $modelClass::where($setting->match_target, $matchValue)->first();
         }
 
-        /** @var \Illuminate\Database\Eloquent\Model $existing */
-        $existing = $modelClass::where($setting->match_target, $matchValue)->first();
+        $matchValueForLog = $usingFallback
+            ? $setting->describeFallbackKey($recordArray)
+            : $matchValue;
 
         $data = [];
         foreach (($setting->fields ?? []) as $targetColumn => $sourceField) {
@@ -65,14 +91,23 @@ class SyncedRecordBridgeObserver
             // Only the mapped columns are touched — mall-owned fields
             // (images, description, category, etc.) are never overwritten,
             // and an already-assigned category is never re-resolved.
+            //
+            // If this record was matched via the fallback key AND now
+            // has a real barcode (a supplier finally printed one), write
+            // it — a barcode discovered later should stick. Never
+            // overwrite an existing match_target value with null.
+            if (! blank($matchValue)) {
+                $data[$setting->match_target] = $matchValue;
+            }
+
             try {
                 $existing->update($data);
-                $this->log($record, 'updated', null, null, $modelClass, $existing->getKey(), $matchValue);
+                $this->log($record, 'updated', null, null, $modelClass, $existing->getKey(), $matchValueForLog);
             } catch (\Throwable $e) {
-                $this->log($record, 'skipped', 'db_error', $e->getMessage(), $modelClass, null, $matchValue);
+                $this->log($record, 'skipped', 'db_error', $e->getMessage(), $modelClass, null, $matchValueForLog);
 
                 Log::warning('SqlSync bridge: skipped updating product — a mapped field violated a database constraint.', [
-                    'match_value' => $matchValue,
+                    'match_value' => $matchValueForLog,
                     'name' => $record->name,
                     'error' => $e->getMessage(),
                 ]);
@@ -95,29 +130,36 @@ class SyncedRecordBridgeObserver
             ->contains(fn ($value) => blank($value));
 
         if ($missingRequired && $setting->skip_create_if_missing_defaults) {
-            $this->log($record, 'skipped', 'missing_defaults', 'قيمة افتراضية إجبارية ناقصة (مثل category_id) ولا يوجد مصدر تلقائي لها.', null, null, $matchValue);
+            $this->log($record, 'skipped', 'missing_defaults', 'قيمة افتراضية إجبارية ناقصة (مثل category_id) ولا يوجد مصدر تلقائي لها.', null, null, $matchValueForLog);
 
             Log::info('SqlSync bridge: skipped creating product — missing required default.', [
-                'match_value' => $matchValue,
+                'match_value' => $matchValueForLog,
                 'name' => $record->name,
             ]);
 
             return;
         }
 
-        $data[$setting->match_target] = $matchValue;
+        // Only stamp match_target when we have an actual scalar value —
+        // never write null over it (a fallback match has no single
+        // scalar value to store; the composite fields it used are
+        // already part of $data via the normal 'fields' mapping if the
+        // admin included them there too).
+        if (! blank($matchValue)) {
+            $data[$setting->match_target] = $matchValue;
+        }
 
         try {
             $created = $modelClass::create(array_merge($data, $defaults));
-            $this->log($record, 'created', null, null, $modelClass, $created->getKey(), $matchValue);
+            $this->log($record, 'created', null, null, $modelClass, $created->getKey(), $matchValueForLog);
         } catch (\Throwable $e) {
             // A single record with, say, a missing price or a duplicate
             // SKU must never abort the whole sync/re-apply run for
             // everyone else — log it and move on.
-            $this->log($record, 'skipped', 'db_error', $e->getMessage(), $modelClass, null, $matchValue);
+            $this->log($record, 'skipped', 'db_error', $e->getMessage(), $modelClass, null, $matchValueForLog);
 
             Log::warning('SqlSync bridge: skipped creating product — a mapped field violated a database constraint.', [
-                'match_value' => $matchValue,
+                'match_value' => $matchValueForLog,
                 'name' => $record->name,
                 'error' => $e->getMessage(),
             ]);
