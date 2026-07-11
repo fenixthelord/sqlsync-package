@@ -203,6 +203,12 @@ class BridgeDryRunService
             $data[$setting->source_number_column] = $record->source_guid;
         }
 
+        foreach (($setting->auto_generate_columns ?? []) as $columnName) {
+            if (! isset($data[$columnName])) {
+                $data[$columnName] = $setting->generateUniqueValue($columnName, (string) $record->source_guid);
+            }
+        }
+
         try {
             // Real INSERT attempt — same reasoning as the update branch
             // above. This is what actually catches 'field X doesn't have

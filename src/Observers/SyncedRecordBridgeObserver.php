@@ -211,6 +211,17 @@ class SyncedRecordBridgeObserver
             $data[$setting->source_number_column] = $record->source_guid;
         }
 
+        // Auto-generated unique values — generalized fallback for any
+        // required column the admin marked for auto-generation because
+        // no real synced data covers it confidently. Only fills columns
+        // NOT already set by 'fields'/source_number_column/auto_slug/
+        // category resolution above — never overrides real data.
+        foreach (($setting->auto_generate_columns ?? []) as $columnName) {
+            if (! isset($data[$columnName])) {
+                $data[$columnName] = $setting->generateUniqueValue($columnName, (string) $record->source_guid);
+            }
+        }
+
         $defaults = $setting->create_defaults ?? [];
         $missingRequired = collect($defaults)
             ->reject(fn ($value, $column) => $column === $setting->category_target_field && isset($data[$column]))

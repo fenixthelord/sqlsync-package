@@ -18,6 +18,7 @@ class BridgeSetting extends Model
         'match_target',
         'auto_slug_column',
         'source_number_column',
+        'auto_generate_columns',
         'fallback_match_fields',
         'fields',
         'create_defaults',
@@ -37,6 +38,7 @@ class BridgeSetting extends Model
         'create_defaults' => 'array',
         'skip_create_if_missing_defaults' => 'boolean',
         'category_use_tree_resolution' => 'boolean',
+        'auto_generate_columns' => 'array',
     ];
 
     /**
@@ -200,6 +202,30 @@ class BridgeSetting extends Model
         }
 
         return $base.'-'.substr(md5($sourceGuid), 0, 8);
+    }
+
+    /**
+     * Generates a guaranteed-unique value for a column with NO obvious
+     * source data at all — the general case generateSafeSlug() already
+     * handles for slugs specifically. Used for any required column the
+     * Bridge configuration wizard's smart suggestion couldn't confidently
+     * map to real synced data.
+     *
+     * Deterministic per (column, sourceGuid) pair rather than truly
+     * random — re-processing the same record (a retry, a re-sync of an
+     * unchanged item) produces the SAME generated value every time,
+     * rather than a new one each attempt. That matters because this only
+     * ever runs on CREATE (never on update, same treatment as auto-slug
+     * and category_id), so it should never need to change once assigned
+     * — but staying deterministic means even an edge case where the
+     * same create is attempted twice (e.g. a retried HTTP push that
+     * wasn't caught by idempotency for some reason) produces a
+     * reproducible value rather than a second random one that could
+     * itself collide with something else.
+     */
+    public function generateUniqueValue(string $columnName, string $sourceGuid): string
+    {
+        return 'AG-'.strtoupper(substr(md5($columnName.'|'.$sourceGuid), 0, 12));
     }
 
     public function describeFallbackKey(array $recordArray): string
