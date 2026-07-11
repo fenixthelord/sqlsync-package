@@ -125,7 +125,20 @@ class SyncedRecordBridgeObserver
 
         $data = [];
         foreach (($setting->fields ?? []) as $targetColumn => $sourceField) {
-            $data[$targetColumn] = Arr::get($recordArray, $sourceField);
+            $value = $this->resolveFieldValue($recordArray, $sourceField);
+
+            // Deliberately skip setting the key at all when the source
+            // resolves to nothing — NOT $data[$targetColumn] = null.
+            // $data + $defaults (used at create time) only fills keys
+            // that are genuinely ABSENT from $data; a key present with
+            // a null value blocks the default from ever applying, even
+            // when create_defaults has an explicit fallback configured
+            // for it (e.g. price => 0 for items Al-Bayan has no pricing
+            // details for yet — a real, valid state: the item exists
+            // but wasn't fully priced when it was entered).
+            if ($value !== null) {
+                $data[$targetColumn] = $value;
+            }
         }
 
         if ($existing) {
@@ -373,6 +386,43 @@ class SyncedRecordBridgeObserver
             $found = $modelClass::where($column, $data[$column])->first();
             if ($found) {
                 return $found;
+            }
+        }
+
+        return null;
+    }
+
+    /**
+     * Resolves a field mapping's value against the synced record —
+     * supports both a single source path (string, the original/
+     * backward-compatible format) and a LIST of candidate paths (array),
+     * trying each in order and using the first one that isn't genuinely
+     * blank.
+     *
+     * Direct fix for a real production case: a required 'price' column
+     * failed with 'Column price cannot be null' for a specific product
+     * whose extra_data.price_4 happened to be empty — even though
+     * price_4 IS the right price tier for MOST products in this
+     * catalogue. Different items apparently populate different price
+     * columns in the same accounting software, which we'd already
+     * confirmed manually during earlier debugging (Saati Pharmacy's
+     * real retail price lived in price_4, not the more obviously-named
+     * sel_price) — this generalizes that reality into a first-class
+     * mapping capability instead of only ever trying ONE column and
+     * failing hard when it happens to be empty for a particular item.
+     *
+     * Uses Laravel's blank() semantics deliberately — a genuine 0 is
+     * NOT blank (a real, intentional zero price/quantity is respected),
+     * only null/''/[] triggers falling through to the next candidate.
+     */
+    private function resolveFieldValue(array $recordArray, string|array $sourceField): mixed
+    {
+        $candidates = is_array($sourceField) ? $sourceField : [$sourceField];
+
+        foreach ($candidates as $path) {
+            $value = Arr::get($recordArray, $path);
+            if (! blank($value)) {
+                return $value;
             }
         }
 

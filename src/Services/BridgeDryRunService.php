@@ -136,7 +136,10 @@ class BridgeDryRunService
 
         $data = [];
         foreach (($setting->fields ?? []) as $targetColumn => $sourceField) {
-            $data[$targetColumn] = Arr::get($recordArray, $sourceField);
+            $value = $this->resolveFieldValue($recordArray, $sourceField);
+            if ($value !== null) {
+                $data[$targetColumn] = $value;
+            }
         }
 
         if ($existing) {
@@ -252,6 +255,26 @@ class BridgeDryRunService
                 'match_value' => $matchValueForLog,
             ];
         }
+    }
+
+    /**
+     * Mirrors SyncedRecordBridgeObserver::resolveFieldValue() — see its
+     * docblock for the full reasoning. Kept as a separate copy for the
+     * same reason the rest of this class duplicates the Observer's
+     * logic.
+     */
+    private function resolveFieldValue(array $recordArray, string|array $sourceField): mixed
+    {
+        $candidates = is_array($sourceField) ? $sourceField : [$sourceField];
+
+        foreach ($candidates as $path) {
+            $value = Arr::get($recordArray, $path);
+            if (! blank($value)) {
+                return $value;
+            }
+        }
+
+        return null;
     }
 
     /**
