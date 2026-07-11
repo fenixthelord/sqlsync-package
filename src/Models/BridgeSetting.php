@@ -16,6 +16,7 @@ class BridgeSetting extends Model
         'target_model',
         'match_source',
         'match_target',
+        'auto_slug_column',
         'fallback_match_fields',
         'fields',
         'create_defaults',
@@ -170,6 +171,36 @@ class BridgeSetting extends Model
      * used in Bridge Activity log messages so support/customers can see
      * exactly what values were compared.
      */
+    /**
+     * Generates a guaranteed-unique, guaranteed-non-null slug for a
+     * synced record. NEVER derives from a raw source field directly —
+     * confirmed in production that fields commonly used for this
+     * (e.g. Al-Bayan's 'code') are frequently blank and never
+     * guaranteed unique across the catalogue, causing every creation
+     * to fail with either a NOT NULL or a UNIQUE constraint violation.
+     *
+     * name + a short hash of source_guid: source_guid is the sync
+     * system's own primary key (Al-Bayan's internal item number),
+     * always present, always unique. The name makes the slug at least
+     * somewhat readable/SEO-friendly; the hash suffix is what actually
+     * guarantees uniqueness even if two products happen to share a
+     * name.
+     */
+    public function generateSafeSlug(string $name, string $sourceGuid): string
+    {
+        $base = \Illuminate\Support\Str::slug($name);
+
+        if ($base === '') {
+            // Str::slug() can legitimately return '' for names that are
+            // ENTIRELY non-Latin (e.g. pure Arabic with no transliteration
+            // rules configured) — fall back to a generic prefix rather
+            // than shipping an empty base.
+            $base = 'item';
+        }
+
+        return $base.'-'.substr(md5($sourceGuid), 0, 8);
+    }
+
     public function describeFallbackKey(array $recordArray): string
     {
         $pairs = $this->fallback_match_fields ?? [];

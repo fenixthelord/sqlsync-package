@@ -158,6 +158,20 @@ class SyncedRecordBridgeObserver
             $data[$setting->category_target_field] = $categoryId;
         }
 
+        // Auto-slug — deliberately computed AFTER the 'fields' loop so it
+        // always wins, even if an admin still has a raw field (like
+        // 'code') mapped to the same column from before this feature
+        // existed. Only applied on CREATE, matching category_id's
+        // treatment — an existing product's slug is never touched by a
+        // later sync, so a source-side name change doesn't silently
+        // break bookmarked/indexed URLs.
+        if ($setting->auto_slug_column) {
+            $data[$setting->auto_slug_column] = $setting->generateSafeSlug(
+                (string) $record->name,
+                (string) $record->source_guid,
+            );
+        }
+
         $defaults = $setting->create_defaults ?? [];
         $missingRequired = collect($defaults)
             ->reject(fn ($value, $column) => $column === $setting->category_target_field && isset($data[$column]))

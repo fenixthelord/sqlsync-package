@@ -168,6 +168,13 @@ class BridgeDryRunService
             $data[$setting->category_target_field] = $categoryId;
         }
 
+        if ($setting->auto_slug_column) {
+            $data[$setting->auto_slug_column] = $setting->generateSafeSlug(
+                (string) $record->name,
+                (string) $record->source_guid,
+            );
+        }
+
         $defaults = $setting->create_defaults ?? [];
         $missingRequired = collect($defaults)
             ->reject(fn ($value, $column) => $column === $setting->category_target_field && isset($data[$column]))
