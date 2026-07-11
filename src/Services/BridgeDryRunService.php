@@ -205,7 +205,7 @@ class BridgeDryRunService
             return [
                 'record_name' => $record->name,
                 'action' => 'would_create',
-                'detail' => "رح ينخلق منتج جديد (تصنيف: ".($categoryId ?? 'افتراضي').")",
+                'detail' => 'رح ينشئ منتج جديد (تصنيف: '.($categoryId ?? 'افتراضي').')',
                 'match_value' => $matchValueForLog,
             ];
         } catch (\Throwable $e) {
