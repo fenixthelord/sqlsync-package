@@ -223,6 +223,24 @@ class BridgeDryRunService
                 'match_value' => $matchValueForLog,
             ];
         } catch (\Throwable $e) {
+            // Mirror the Observer's slug-collision recovery detection —
+            // without this, the dry run would show a scary 'error' for
+            // exactly the case that actually self-heals in production
+            // (see SyncedRecordBridgeObserver's matching catch block for
+            // the full reasoning).
+            if ($setting->auto_slug_column && str_contains($e->getMessage(), (string) ($data[$setting->auto_slug_column] ?? "\0"))) {
+                $recovered = $modelClass::where($setting->auto_slug_column, $data[$setting->auto_slug_column])->first();
+
+                if ($recovered) {
+                    return [
+                        'record_name' => $record->name,
+                        'action' => 'would_update',
+                        'detail' => "رح يتحدّث المنتج #{$recovered->getKey()} (استرجاع عبر تعارض slug — كان بيفشل قبل هالإصلاح)",
+                        'match_value' => $matchValueForLog,
+                    ];
+                }
+            }
+
             return [
                 'record_name' => $record->name,
                 'action' => 'error',

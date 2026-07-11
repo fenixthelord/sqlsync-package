@@ -281,6 +281,42 @@ class SyncedRecordBridgeObserver
 
             $this->log($record, 'created', null, null, $modelClass, $created->getKey(), $matchValueForLog);
         } catch (\Throwable $e) {
+            // Last-resort recovery: a duplicate-key failure specifically
+            // on auto_slug_column is a strong signal the record already
+            // exists — generateSafeSlug() is DETERMINISTIC per (name,
+            // source_guid), so the exact same slug colliding means this
+            // exact item was already created at some point, and all
+            // three identity layers above (source_number_column, the
+            // sticky link, barcode/fallback matching) independently
+            // failed to find it — most commonly residual data from a
+            // Danger Zone reset that wiped sqlsync_records/category
+            // tracking without also wiping Products.
+            //
+            // Rather than leave this as a hard, repeating failure,
+            // recover by finding the existing row via the slug itself
+            // and switching to an update — and critically, backfill
+            // source_number_column on it so THIS specific gap closes
+            // permanently for every sync after this one.
+            if ($setting->auto_slug_column && str_contains($e->getMessage(), (string) ($data[$setting->auto_slug_column] ?? "\0"))) {
+                $recovered = $modelClass::where($setting->auto_slug_column, $data[$setting->auto_slug_column])->first();
+
+                if ($recovered) {
+                    try {
+                        unset($data[$setting->auto_slug_column]); // don't touch an existing slug
+                        $recovered->update($data);
+                        SyncedRecord::whereKey($record->id)->update(['product_id' => $recovered->getKey()]);
+
+                        $this->log($record, 'updated', null,
+                            'استُرجع عبر تعارض slug — الطبقات الثلاث الأساسية فشلت بإيجاده مسبقاً، غالباً من بيانات متبقية من reset سابق.',
+                            $modelClass, $recovered->getKey(), $matchValueForLog);
+
+                        return;
+                    } catch (\Throwable) {
+                        // fall through to the normal failure logging below
+                    }
+                }
+            }
+
             // A single record with, say, a missing price or a duplicate
             // SKU must never abort the whole sync/re-apply run for
             // everyone else — log it and move on.
