@@ -26,6 +26,7 @@ class BridgeSetting extends Model
         'category_model',
         'category_source',
         'category_use_tree_resolution',
+        'category_reresolve_on_update',
         'category_match_column',
         'category_target_field',
         'category_slug_column',
@@ -38,6 +39,7 @@ class BridgeSetting extends Model
         'create_defaults' => 'array',
         'skip_create_if_missing_defaults' => 'boolean',
         'category_use_tree_resolution' => 'boolean',
+        'category_reresolve_on_update' => 'boolean',
         'auto_generate_columns' => 'array',
     ];
 

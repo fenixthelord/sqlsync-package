@@ -165,6 +165,19 @@ class SyncedRecordBridgeObserver
                 $data[$setting->source_number_column] = $record->source_guid;
             }
 
+            // Opt-in only (default false — the original, protective
+            // behavior). Most stores want manual category reassignments
+            // on the website to stick permanently; this exists for the
+            // minority who want the website to always mirror the
+            // accounting software's CURRENT classification and don't do
+            // manual overrides on the website side.
+            if ($setting->category_reresolve_on_update) {
+                $categoryId = $setting->resolveCategoryId($recordArray);
+                if ($categoryId !== null && $setting->category_target_field) {
+                    $data[$setting->category_target_field] = $categoryId;
+                }
+            }
+
             try {
                 $existing->update($data);
 
