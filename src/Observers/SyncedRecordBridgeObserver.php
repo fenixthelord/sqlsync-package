@@ -4,6 +4,7 @@ declare(strict_types=1);
 
 namespace SqlSync\LaravelSqlSync\Observers;
 
+use Illuminate\Database\Eloquent\Model;
 use Illuminate\Support\Arr;
 use Illuminate\Support\Facades\Log;
 use SqlSync\LaravelSqlSync\Models\BridgeLog;
@@ -281,38 +282,44 @@ class SyncedRecordBridgeObserver
 
             $this->log($record, 'created', null, null, $modelClass, $created->getKey(), $matchValueForLog);
         } catch (\Throwable $e) {
-            // Last-resort recovery: a duplicate-key failure specifically
-            // on auto_slug_column is a strong signal the record already
-            // exists — generateSafeSlug() is DETERMINISTIC per (name,
-            // source_guid), so the exact same slug colliding means this
-            // exact item was already created at some point, and all
-            // three identity layers above (source_number_column, the
-            // sticky link, barcode/fallback matching) independently
-            // failed to find it — most commonly residual data from a
-            // Danger Zone reset that wiped sqlsync_records/category
-            // tracking without also wiping Products.
+            // General principle, not a slug-specific patch: ANY unique-
+            // constraint violation on a CREATE attempt means the row
+            // already exists somewhere — for ANY column, not just
+            // auto_slug_column. If we hit a duplicate-key error here at
+            // all, it's proof one of our three identity layers
+            // (source_number_column, the sticky link, barcode/fallback
+            // matching) failed to find a row that genuinely exists —
+            // most commonly residual data from a Danger Zone reset that
+            // wiped sqlsync_records/category tracking without also
+            // wiping Products. This must ALWAYS resolve to an update,
+            // never a permanent hard failure, regardless of which
+            // specific column the database complained about.
             //
-            // Rather than leave this as a hard, repeating failure,
-            // recover by finding the existing row via the slug itself
-            // and switching to an update — and critically, backfill
-            // source_number_column on it so THIS specific gap closes
-            // permanently for every sync after this one.
-            if ($setting->auto_slug_column && str_contains($e->getMessage(), (string) ($data[$setting->auto_slug_column] ?? "\0"))) {
-                $recovered = $modelClass::where($setting->auto_slug_column, $data[$setting->auto_slug_column])->first();
+            // Recovery: try every identifying value we independently
+            // have on hand for this exact record — in order of
+            // trustworthiness — and take the first one that finds a row.
+            $isDuplicateKey = str_contains($e->getMessage(), 'Duplicate entry')
+                || str_contains($e->getMessage(), '1062')
+                || $e->getCode() === '23000';
+
+            if ($isDuplicateKey) {
+                $recovered = $this->findByAnyKnownIdentity($modelClass, $setting, $data, $matchValue);
 
                 if ($recovered) {
                     try {
-                        unset($data[$setting->auto_slug_column]); // don't touch an existing slug
                         $recovered->update($data);
                         SyncedRecord::whereKey($record->id)->update(['product_id' => $recovered->getKey()]);
 
                         $this->log($record, 'updated', null,
-                            'استُرجع عبر تعارض slug — الطبقات الثلاث الأساسية فشلت بإيجاده مسبقاً، غالباً من بيانات متبقية من reset سابق.',
+                            'استُرجع عبر تعارض قيد unique — الطبقات الثلاث الأساسية فشلت بإيجاده مسبقاً، غالباً من بيانات متبقية من reset سابق.',
                             $modelClass, $recovered->getKey(), $matchValueForLog);
 
                         return;
                     } catch (\Throwable) {
-                        // fall through to the normal failure logging below
+                        // Even the recovery update failed (a genuinely
+                        // different problem) — fall through to normal
+                        // failure logging below rather than looping
+                        // forever or throwing uncaught.
                     }
                 }
             }
@@ -328,6 +335,48 @@ class SyncedRecordBridgeObserver
                 'error' => $e->getMessage(),
             ]);
         }
+    }
+
+    /**
+     * Last-resort identity recovery, used only when a CREATE attempt hit
+     * a duplicate-key violation — proof the row already exists, but our
+     * three normal identity layers all failed to find it beforehand.
+     *
+     * Tries every value we independently have on hand for this exact
+     * record, in order of how trustworthy each one is as a unique
+     * identifier — source_number_column first (the strongest guarantee
+     * the Bridge offers), then match_target (usually a real barcode),
+     * then auto_slug_column (deterministic per name+source_guid, so a
+     * match here is still solid proof even though it's a weaker signal
+     * in principle than a real barcode). Stops at the first hit.
+     *
+     * @param array<string, mixed> $data the fully-built column => value
+     *   array that was about to be passed to create()
+     */
+    private function findByAnyKnownIdentity(
+        string $modelClass,
+        BridgeSetting $setting,
+        array $data,
+        ?string $matchValue,
+    ): ?Model {
+        $candidates = [
+            $setting->source_number_column,
+            $setting->match_target,
+            $setting->auto_slug_column,
+        ];
+
+        foreach ($candidates as $column) {
+            if (blank($column) || ! array_key_exists($column, $data) || blank($data[$column])) {
+                continue;
+            }
+
+            $found = $modelClass::where($column, $data[$column])->first();
+            if ($found) {
+                return $found;
+            }
+        }
+
+        return null;
     }
 
     private function log(

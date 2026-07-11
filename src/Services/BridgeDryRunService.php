@@ -223,19 +223,23 @@ class BridgeDryRunService
                 'match_value' => $matchValueForLog,
             ];
         } catch (\Throwable $e) {
-            // Mirror the Observer's slug-collision recovery detection —
-            // without this, the dry run would show a scary 'error' for
-            // exactly the case that actually self-heals in production
-            // (see SyncedRecordBridgeObserver's matching catch block for
-            // the full reasoning).
-            if ($setting->auto_slug_column && str_contains($e->getMessage(), (string) ($data[$setting->auto_slug_column] ?? "\0"))) {
-                $recovered = $modelClass::where($setting->auto_slug_column, $data[$setting->auto_slug_column])->first();
+            // Mirror the Observer's general recovery — ANY duplicate-key
+            // violation on create, not just slug specifically, means the
+            // row already exists and should resolve to an update.
+            // Without this, the dry run would show a scary 'error' for
+            // exactly the case that actually self-heals in production.
+            $isDuplicateKey = str_contains($e->getMessage(), 'Duplicate entry')
+                || str_contains($e->getMessage(), '1062')
+                || $e->getCode() === '23000';
+
+            if ($isDuplicateKey) {
+                $recovered = $this->findByAnyKnownIdentity($modelClass, $setting, $data);
 
                 if ($recovered) {
                     return [
                         'record_name' => $record->name,
                         'action' => 'would_update',
-                        'detail' => "رح يتحدّث المنتج #{$recovered->getKey()} (استرجاع عبر تعارض slug — كان بيفشل قبل هالإصلاح)",
+                        'detail' => "رح يتحدّث المنتج #{$recovered->getKey()} (استرجاع عبر تعارض unique — كان بيفشل قبل هالإصلاح)",
                         'match_value' => $matchValueForLog,
                     ];
                 }
@@ -248,5 +252,36 @@ class BridgeDryRunService
                 'match_value' => $matchValueForLog,
             ];
         }
+    }
+
+    /**
+     * Mirrors SyncedRecordBridgeObserver::findByAnyKnownIdentity() —
+     * tries every value we independently have on hand for this exact
+     * record, in order of trustworthiness, stopping at the first hit.
+     * Kept as a separate copy rather than a shared method for the same
+     * reason the rest of this class duplicates the Observer's logic
+     * (see class docblock) — dry-run mode should never risk destabilizing
+     * the production-critical Observer for the sake of DRY.
+     */
+    private function findByAnyKnownIdentity(string $modelClass, BridgeSetting $setting, array $data): ?\Illuminate\Database\Eloquent\Model
+    {
+        $candidates = [
+            $setting->source_number_column,
+            $setting->match_target,
+            $setting->auto_slug_column,
+        ];
+
+        foreach ($candidates as $column) {
+            if (blank($column) || ! array_key_exists($column, $data) || blank($data[$column])) {
+                continue;
+            }
+
+            $found = $modelClass::where($column, $data[$column])->first();
+            if ($found) {
+                return $found;
+            }
+        }
+
+        return null;
     }
 }
