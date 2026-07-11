@@ -59,7 +59,23 @@ class SyncedRecordBridgeObserver
         // own internal item number) never changes for the life of the
         // item, so anchoring to it — once established — is what makes
         // updates resilient to any amount of source-side editing.
-        if ($record->product_id) {
+        // ── Layer 1 (strongest): identity stored directly ON the product
+        // itself, in source_number_column. Checked FIRST because it's
+        // the most durable link available — it survives even a full
+        // wipe of sqlsync_records (e.g. Danger Zone reset without also
+        // wiping Products), since the identity lives on the product row,
+        // not on SqlSync's own bookkeeping table. Requires the admin to
+        // configure source_number_column and add that column to their
+        // Products table — optional, but the strongest guarantee
+        // available once set up.
+        if ($setting->source_number_column) {
+            $existing = $modelClass::where($setting->source_number_column, $record->source_guid)->first();
+        }
+
+        // ── Layer 2: the sqlsync_records-side sticky link. Faster to
+        // check (no dependency on the admin having configured Layer 1),
+        // but lost if sqlsync_records itself is ever wiped.
+        if (! $existing && $record->product_id) {
             $existing = $modelClass::find($record->product_id);
             // If the linked Product was deleted independently (e.g. a
             // human removed it from the website directly), fall through
@@ -67,6 +83,9 @@ class SyncedRecordBridgeObserver
             // nothing — the item may need to be re-created.
         }
 
+        // ── Layer 3: ordinary matching (barcode, or the composite
+        // fallback) — the ONLY layer available on true first contact,
+        // when neither of the above has ever been established yet.
         if (! $existing) {
             if (blank($matchValue) || blank($setting->match_target)) {
                 // Primary match key (usually barcode) is blank on this
@@ -121,6 +140,17 @@ class SyncedRecordBridgeObserver
                 $data[$setting->match_target] = $matchValue;
             }
 
+            // Backfill the durable product-side identity — critical for
+            // products that existed before this feature shipped, or
+            // that were JUST matched via barcode/fallback for the first
+            // time (Layer 3 in the identity resolution above). Once
+            // written, this specific product becomes immune to future
+            // sqlsync_records wipes — Layer 1 will find it directly next
+            // time, with zero reliance on barcode/name matching.
+            if ($setting->source_number_column) {
+                $data[$setting->source_number_column] = $record->source_guid;
+            }
+
             try {
                 $existing->update($data);
 
@@ -170,6 +200,15 @@ class SyncedRecordBridgeObserver
                 (string) $record->name,
                 (string) $record->source_guid,
             );
+        }
+
+        // Establish the durable product-side identity from the very
+        // first creation — this new product is now immune to any future
+        // sqlsync_records wipe, since Layer 1 of the identity resolution
+        // above will find it directly by this column, with zero reliance
+        // on barcode/name ever again.
+        if ($setting->source_number_column) {
+            $data[$setting->source_number_column] = $record->source_guid;
         }
 
         $defaults = $setting->create_defaults ?? [];

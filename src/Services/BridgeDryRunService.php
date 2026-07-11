@@ -102,7 +102,11 @@ class BridgeDryRunService
         $usingFallback = false;
         $existing = null;
 
-        if ($record->product_id) {
+        if ($setting->source_number_column) {
+            $existing = $modelClass::where($setting->source_number_column, $record->source_guid)->first();
+        }
+
+        if (! $existing && $record->product_id) {
             $existing = $modelClass::find($record->product_id);
         }
 
@@ -193,6 +197,10 @@ class BridgeDryRunService
             $data[$setting->match_target] = $matchValue;
         } elseif ($usingFallback) {
             $data[$setting->match_target] = 'SS-'.$record->source_guid;
+        }
+
+        if ($setting->source_number_column) {
+            $data[$setting->source_number_column] = $record->source_guid;
         }
 
         try {

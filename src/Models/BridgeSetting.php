@@ -17,6 +17,7 @@ class BridgeSetting extends Model
         'match_source',
         'match_target',
         'auto_slug_column',
+        'source_number_column',
         'fallback_match_fields',
         'fields',
         'create_defaults',
