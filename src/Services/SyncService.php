@@ -66,6 +66,19 @@ class SyncService
             );
         }
 
+        // Quantity snapshot — a lightweight full-snapshot dataset the Agent
+        // pushes to work around accounting software that doesn't touch
+        // MatCard.UDate when a sale/receipt changes stock levels. Every
+        // record is `{ number, quantity }` only; we update quantity in
+        // place and rely on SyncedRecordBridgeObserver to propagate to the
+        // bridged Product model. See processQuantitySnapshot() below.
+        if ($dataset === 'quantities') {
+            return $this->processQuantitySnapshot(
+                $records, $provider, $dataset, $agentId, $companyId,
+                $batchIndex, $batchCount, $idempotencyKey, $watermark,
+            );
+        }
+
         // ── Resolve preset ──────────────────────────────────────────
         $presetClass = config("sqlsync.presets.{$provider}");
         if (! $presetClass || ! class_exists($presetClass)) {
@@ -149,6 +162,86 @@ class SyncService
      *
      * @return array{inserted:int, updated:int, skipped:int, replay:bool}
      */
+    /**
+     * Quantity-snapshot dataset. The Agent sends the full (source_guid,
+     * quantity) list every sync cycle, checksum-deduplicated so it only
+     * ships when something actually changed. We update the quantity on
+     * matching sqlsync_records in bulk — everything else on the record
+     * (name, prices, mappings) is untouched.
+     *
+     * Records not matching any existing sqlsync_records row are counted
+     * as skipped (harmless — a full materials sync will catch them soon).
+     *
+     * Downstream: SyncedRecordBridgeObserver.saved() fires per-record,
+     * which re-runs the field-mapping pass and propagates the new
+     * quantity to the host app's Product model (i.e. the website).
+     */
+    private function processQuantitySnapshot(
+        array $records,
+        string $provider,
+        ?string $dataset,
+        string $agentId,
+        ?int $companyId,
+        ?int $batchIndex,
+        ?int $batchCount,
+        ?string $idempotencyKey,
+        ?string $watermark,
+    ): array {
+        $inserted = 0;
+        $updated  = 0;
+        $skipped  = 0;
+
+        DB::transaction(function () use ($records, $provider, $agentId, $companyId, &$updated, &$skipped) {
+            foreach ($records as $raw) {
+                // Field names come straight from the Agent's SELECT aliases —
+                // \`number\` for the source-side identifier, \`quantity\` for stock.
+                // We do NOT run the preset\'s map() here — quantity snapshots
+                // are intentionally schema-thin, only 2 fields per row, so
+                // no per-preset mapping is needed.
+                $sourceGuid = $raw['number'] ?? null;
+                $qty        = $raw['quantity'] ?? null;
+
+                if ($sourceGuid === null || $qty === null) {
+                    $skipped++;
+
+                    continue;
+                }
+
+                $existing = SyncedRecord::where('source_guid', (string) $sourceGuid)
+                    ->where('preset', $provider)
+                    ->when($companyId, fn ($q) => $q->where('company_id', $companyId))
+                    ->first();
+
+                if (! $existing) {
+                    // No materials row yet for this source_guid — the next
+                    // full materials sync will create it with the current
+                    // quantity anyway. Skip silently.
+                    $skipped++;
+
+                    continue;
+                }
+
+                // update() (not save()) triggers the observer with the
+                // \`saved\` event, which is what propagates to the Product.
+                $existing->update([
+                    'quantity'  => (float) $qty,
+                    'synced_at' => now(),
+                ]);
+                $updated++;
+            }
+        });
+
+        $this->updateAgentStats($agentId, $companyId, $updated);
+
+        $this->writeSyncLog(
+            $provider, $dataset, $agentId, $companyId,
+            $batchIndex, $batchCount, $idempotencyKey, $watermark,
+            $inserted, $updated, $skipped,
+        );
+
+        return compact('inserted', 'updated', 'skipped') + ['replay' => false];
+    }
+
     private function processCategoryNodes(
         array $records,
         string $provider,
