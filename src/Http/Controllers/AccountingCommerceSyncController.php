@@ -33,7 +33,7 @@ class AccountingCommerceSyncController extends Controller
             ->where('idempotency_key', $idempotencyKey)
             ->first();
 
-        if ($existing !== null) {
+        if ($existing !== null && in_array($existing->status, ['success', 'warning'], true)) {
             return response()->json([
                 'success' => true,
                 'version' => 2,
@@ -67,7 +67,7 @@ class AccountingCommerceSyncController extends Controller
             ? 'success'
             : ($accepted > 0 ? 'warning' : 'error');
 
-        SyncLog::create([
+        $logValues = [
             'agent_id' => $agentId,
             'company_id' => $companyId,
             'preset' => $provider,
@@ -84,7 +84,13 @@ class AccountingCommerceSyncController extends Controller
                 ? null
                 : json_encode($result['errors'], JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES),
             'synced_at' => now(),
-        ]);
+        ];
+
+        if ($existing !== null) {
+            $existing->fill($logValues)->save();
+        } else {
+            SyncLog::create($logValues);
+        }
 
         $payload = [
             'success' => $accepted > 0 || $rejected === 0,
