@@ -249,6 +249,65 @@ final class AccountingCommerceSyncTest extends TestCase
             ->assertJsonPath('source_changed', false);
     }
 
+    public function test_heartbeat_clears_stale_canonical_rows_immediately_after_source_switch(): void
+    {
+        $this->postAccounting(
+            'currencies',
+            'heartbeat-old-currency',
+            [[
+                'provider_source_id' => 'old-usd',
+                'name' => 'Old USD',
+                'code' => 'USD',
+                'iso_code' => 'USD',
+                'is_base' => true,
+                'rate_to_base' => 1,
+            ]],
+            self::SOURCE_A,
+        )->assertOk();
+
+        $this->postAccounting(
+            'product-currency-bindings',
+            'heartbeat-old-binding',
+            [[
+                'product_source_id' => 'old-product',
+                'currency_source_id' => 'old-usd',
+            ]],
+            self::SOURCE_A,
+        )->assertOk();
+
+        $this->postAccounting(
+            'price-offers',
+            'heartbeat-old-offer',
+            [[
+                'product_source_id' => 'old-product',
+                'price_key' => 'retail',
+                'label' => 'Retail',
+                'amount' => 10,
+                'currency_source_id' => 'old-usd',
+            ]],
+            self::SOURCE_A,
+        )->assertOk();
+
+        $this->assertSame(1, AccountingCurrency::query()->count());
+        $this->assertSame(1, AccountingProductCurrencyBinding::query()->count());
+        $this->assertSame(1, AccountingPriceOffer::query()->count());
+
+        $this->postJson(
+            '/sqlsync/agent/heartbeat',
+            ['accounting_source_uuid' => self::SOURCE_B],
+            $this->agentHeaders(),
+        )->assertOk()->assertJsonPath('status', 'ok');
+
+        $this->assertSame(0, AccountingCurrency::query()->count());
+        $this->assertSame(0, AccountingProductCurrencyBinding::query()->count());
+        $this->assertSame(0, AccountingPriceOffer::query()->count());
+        $this->assertDatabaseHas('sqlsync_accounting_source_scopes', [
+            'scope_key' => 'global',
+            'source_provider' => 'al_ameen',
+            'accounting_source_uuid' => self::SOURCE_B,
+        ]);
+    }
+
     /**
      * @param  array<int, array<string, mixed>>  $records
      */
