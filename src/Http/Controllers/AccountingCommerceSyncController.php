@@ -7,10 +7,14 @@ use Illuminate\Http\Request;
 use Illuminate\Routing\Controller;
 use SqlSync\LaravelSqlSync\Models\SyncLog;
 use SqlSync\LaravelSqlSync\Services\AccountingCommerceStore;
+use SqlSync\LaravelSqlSync\Services\AccountingSourceScope;
 
 class AccountingCommerceSyncController extends Controller
 {
-    public function __construct(protected AccountingCommerceStore $commerceStore) {}
+    public function __construct(
+        protected AccountingCommerceStore $commerceStore,
+        protected AccountingSourceScope $sourceScope,
+    ) {}
 
     public function __invoke(Request $request): JsonResponse
     {
@@ -26,7 +30,27 @@ class AccountingCommerceSyncController extends Controller
             ? (int) $request->input('company_id')
             : null;
         $provider = strtolower(trim((string) $data['provider']));
-        $idempotencyKey = (string) data_get($data, 'batch.idempotency_key');
+        $accountingSourceUuid = strtolower(trim((string) $data['accounting_source_uuid']));
+
+        // Bind canonical accounting truth to the currently paired SQL source
+        // before replay detection. A real source/provider switch atomically
+        // removes the previous canonical rows so stale currencies/offers can
+        // never coexist with the new database.
+        $sourceChanged = $this->sourceScope->ensure(
+            $provider,
+            $accountingSourceUuid,
+            $companyId,
+        );
+
+        $wireIdempotencyKey = (string) data_get($data, 'batch.idempotency_key');
+
+        // Defense in depth: even if an older/misconfigured Agent reuses the
+        // same wire idempotency key after a database switch, the server-side
+        // receipt identity remains isolated by accounting source.
+        $idempotencyKey = hash(
+            'sha256',
+            $accountingSourceUuid . '|' . $wireIdempotencyKey,
+        );
 
         $existing = SyncLog::query()
             ->where('agent_id', $agentId)
@@ -42,7 +66,8 @@ class AccountingCommerceSyncController extends Controller
                 'updated' => (int) $existing->updated,
                 'skipped' => (int) $existing->skipped,
                 'replay' => true,
-                'idempotency_key' => $idempotencyKey,
+                'source_changed' => $sourceChanged,
+                'idempotency_key' => $wireIdempotencyKey,
             ]);
         }
 
@@ -102,7 +127,8 @@ class AccountingCommerceSyncController extends Controller
             'skipped' => $rejected,
             'errors' => $result['errors'],
             'replay' => false,
-            'idempotency_key' => $idempotencyKey,
+            'source_changed' => $sourceChanged,
+            'idempotency_key' => $wireIdempotencyKey,
         ];
 
         if ($accepted === 0 && $rejected > 0) {
@@ -118,6 +144,7 @@ class AccountingCommerceSyncController extends Controller
         $common = [
             'version' => ['nullable', 'integer', 'in:2'],
             'provider' => ['required', 'string', 'in:al_ameen,al_bayan'],
+            'accounting_source_uuid' => ['required', 'uuid'],
             'company_id' => ['nullable', 'integer'],
             'batch' => ['required', 'array'],
             'batch.index' => ['required', 'integer', 'min:0'],
