@@ -1,6 +1,7 @@
 <?php
 
 use Illuminate\Support\Facades\Route;
+use SqlSync\LaravelSqlSync\Http\Controllers\AccountingCommerceSyncController;
 use SqlSync\LaravelSqlSync\Http\Controllers\SyncController;
 use SqlSync\LaravelSqlSync\Http\Controllers\Api\LicenseController;
 use SqlSync\LaravelSqlSync\Http\Middleware\AgentAuth;
@@ -20,9 +21,17 @@ Route::prefix($prefix . '/' . $agentPrefix)
 
         // ── Authenticated: HMAC required ──
         Route::middleware(AgentAuth::class)->group(function () {
-            Route::post('sync',      [SyncController::class, 'receive'])->name('sync');
+            Route::post('sync', [SyncController::class, 'receive'])->name('sync');
+
+            Route::post('sync/accounting/currencies', AccountingCommerceSyncController::class)
+                ->name('sync.accounting.currencies');
+            Route::post('sync/accounting/product-currency-bindings', AccountingCommerceSyncController::class)
+                ->name('sync.accounting.product-currency-bindings');
+            Route::post('sync/accounting/price-offers', AccountingCommerceSyncController::class)
+                ->name('sync.accounting.price-offers');
+
             Route::post('heartbeat', [SyncController::class, 'heartbeat'])->name('heartbeat');
-            Route::get('logs',       [SyncController::class, 'logs'])->name('logs');
+            Route::get('logs', [SyncController::class, 'logs'])->name('logs');
 
             Route::post('license/activate', [LicenseController::class, 'activate'])
                 ->name('license.activate');

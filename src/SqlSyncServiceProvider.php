@@ -3,6 +3,7 @@
 namespace SqlSync\LaravelSqlSync;
 
 use Illuminate\Support\ServiceProvider;
+use SqlSync\LaravelSqlSync\Services\AccountingCommerceStore;
 use SqlSync\LaravelSqlSync\Services\SyncService;
 use SqlSync\LaravelSqlSync\Services\AgentAuthService;
 use SqlSync\LaravelSqlSync\Services\LicenseService;
@@ -22,6 +23,7 @@ class SqlSyncServiceProvider extends ServiceProvider
         $this->mergeConfigFrom(__DIR__ . '/../config/sqlsync.php', 'sqlsync');
 
         $this->app->singleton(SyncService::class);
+        $this->app->singleton(AccountingCommerceStore::class);
         $this->app->singleton(AgentAuthService::class);
         $this->app->singleton(LicenseService::class);
     }
