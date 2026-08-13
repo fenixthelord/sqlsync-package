@@ -194,8 +194,8 @@ class SyncService
         DB::transaction(function () use ($records, $provider, $agentId, $companyId, &$updated, &$skipped) {
             foreach ($records as $raw) {
                 // Field names come straight from the Agent's SELECT aliases —
-                // \`number\` for the source-side identifier, \`quantity\` for stock.
-                // We do NOT run the preset\'s map() here — quantity snapshots
+                // `number` for the source-side identifier, `quantity` for stock.
+                // We do NOT run the preset's map() here — quantity snapshots
                 // are intentionally schema-thin, only 2 fields per row, so
                 // no per-preset mapping is needed.
                 $sourceGuid = $raw['number'] ?? null;
@@ -205,6 +205,14 @@ class SyncService
                     $skipped++;
 
                     continue;
+                }
+
+                // Al-Bayan material rows are canonically stored as bayan-{Num}
+                // by AlBayanPreset::map(). Quantity snapshots carry the raw Num,
+                // so normalize only the lookup identity here; never rewrite the
+                // stored material identity or other providers' source GUIDs.
+                if ($provider === 'al_bayan' && ! str_starts_with((string) $sourceGuid, 'bayan-')) {
+                    $sourceGuid = 'bayan-'.$sourceGuid;
                 }
 
                 $existing = SyncedRecord::where('source_guid', (string) $sourceGuid)
@@ -222,7 +230,7 @@ class SyncService
                 }
 
                 // update() (not save()) triggers the observer with the
-                // \`saved\` event, which is what propagates to the Product.
+                // `saved` event, which is what propagates to the Product.
                 $existing->update([
                     'quantity'  => (float) $qty,
                     'synced_at' => now(),
