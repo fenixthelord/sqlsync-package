@@ -2,19 +2,21 @@
 
 namespace SqlSync\LaravelSqlSync;
 
+use Illuminate\Console\Scheduling\Schedule;
 use Illuminate\Support\ServiceProvider;
-use SqlSync\LaravelSqlSync\Services\AccountingCommerceStore;
-use SqlSync\LaravelSqlSync\Services\SyncService;
-use SqlSync\LaravelSqlSync\Services\AgentAuthService;
-use SqlSync\LaravelSqlSync\Services\LicenseService;
-use SqlSync\LaravelSqlSync\Console\InstallCommand;
-use SqlSync\LaravelSqlSync\Console\MakeTenantCommand;
-use SqlSync\LaravelSqlSync\Console\ReapplyBridgeCommand;
 use SqlSync\LaravelSqlSync\Console\GenerateLicenseKeypairCommand;
-use SqlSync\LaravelSqlSync\Console\IssueLicenseCommand;
 use SqlSync\LaravelSqlSync\Console\ImportLegacyLicenseCommand;
+use SqlSync\LaravelSqlSync\Console\InstallCommand;
+use SqlSync\LaravelSqlSync\Console\IssueLicenseCommand;
+use SqlSync\LaravelSqlSync\Console\MakeTenantCommand;
+use SqlSync\LaravelSqlSync\Console\PruneLogsCommand;
+use SqlSync\LaravelSqlSync\Console\ReapplyBridgeCommand;
 use SqlSync\LaravelSqlSync\Models\SyncedRecord;
 use SqlSync\LaravelSqlSync\Observers\SyncedRecordBridgeObserver;
+use SqlSync\LaravelSqlSync\Services\AccountingCommerceStore;
+use SqlSync\LaravelSqlSync\Services\AgentAuthService;
+use SqlSync\LaravelSqlSync\Services\LicenseService;
+use SqlSync\LaravelSqlSync\Services\SyncService;
 
 class SqlSyncServiceProvider extends ServiceProvider
 {
@@ -58,7 +60,17 @@ class SqlSyncServiceProvider extends ServiceProvider
                 GenerateLicenseKeypairCommand::class,
                 IssueLicenseCommand::class,
                 ImportLegacyLicenseCommand::class,
+                PruneLogsCommand::class,
             ]);
+
+            // The package already owns the retention policy, so cleanup must
+            // also be package-owned. Host apps only need their normal Laravel
+            // scheduler runner; no SqlSync-specific cron entry is required.
+            $this->callAfterResolving(Schedule::class, function (Schedule $schedule): void {
+                $schedule->command('sqlsync:prune-logs')
+                    ->dailyAt('03:15')
+                    ->withoutOverlapping();
+            });
         }
     }
 }

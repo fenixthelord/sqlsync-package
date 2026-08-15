@@ -27,7 +27,6 @@ return [
     |   php artisan sqlsync:generate-license-keypair
     |
     | Both keys are base64-encoded PEM so they fit in .env as single lines.
-    |
     */
     'license' => [
         'private_key' => env('SQLSYNC_LICENSE_PRIVATE_KEY')
@@ -76,8 +75,22 @@ return [
     */
     'sync' => [
         'log_enabled'        => env('SQLSYNC_LOG', true),
-        'log_retention_days' => 30,
+        'log_retention_days' => (int) env('SQLSYNC_LOG_RETENTION_DAYS', 30),
         'batch_size'         => 500,
+    ],
+
+    /*
+    |--------------------------------------------------------------------------
+    | Product Bridge Logging
+    |--------------------------------------------------------------------------
+    | Successful per-record bridge activity is extremely high-volume and is
+    | not required for normal operation. Keep it disabled by default; skipped
+    | records and failures are still retained for diagnosis. When explicitly
+    | enabled, bridge history is still bounded by the retention window below.
+    */
+    'bridge' => [
+        'log_successful_actions' => (bool) env('SQLSYNC_BRIDGE_LOG_SUCCESS', false),
+        'log_retention_days'     => (int) env('SQLSYNC_BRIDGE_LOG_RETENTION_DAYS', 14),
     ],
 
     /*
