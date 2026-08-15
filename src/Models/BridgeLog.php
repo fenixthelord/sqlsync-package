@@ -21,4 +21,17 @@ class BridgeLog extends Model
         'target_model',
         'target_id',
     ];
+
+    protected static function booted(): void
+    {
+        static::creating(function (BridgeLog $log): bool {
+            $isSuccessfulAction = in_array($log->action, ['created', 'updated'], true);
+
+            if ($isSuccessfulAction && ! config('sqlsync.bridge.log_successful_actions', false)) {
+                return false;
+            }
+
+            return true;
+        });
+    }
 }
